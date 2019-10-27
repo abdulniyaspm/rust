@@ -34,9 +34,9 @@ extern "C" {
             assert(false && "unreachable");
         } catch (exception e) {
             println("caught C++ exception");
+            assert(rust_ok);
             return;
         }
-        assert(rust_ok);
         assert(false && "did not catch thrown C++ exception");
     }
 

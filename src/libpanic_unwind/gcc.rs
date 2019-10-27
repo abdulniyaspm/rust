@@ -275,8 +275,8 @@ unsafe extern "C" fn rust_eh_personality(state: uw::_Unwind_State,
     }
 }
 
-// On MinGW targets, the unwinding mechanism is SEH however the unwind handler
-// data (aka LSDA) uses GCC-compatible encoding.
+// On x86_64 MinGW targets, the unwinding mechanism is SEH however the unwind
+// handler data (aka LSDA) uses GCC-compatible encoding.
 #[cfg(all(windows, target_arch = "x86_64", target_env = "gnu"))]
 #[lang = "eh_personality"]
 #[no_mangle]
