@@ -133,23 +133,20 @@ const UNWIND_DATA_REG: (i32, i32) = (0, 1); // R0, R1
 // https://github.com/gcc-mirror/gcc/blob/master/libstdc++-v3/libsupc++/eh_personality.cc
 // https://github.com/gcc-mirror/gcc/blob/trunk/libgcc/unwind-c.c
 
-// The personality routine for most of our targets, except ARM, which has a slightly different ABI
-// (however, iOS goes here as it uses SjLj unwinding).  Also, the 64-bit Windows implementation
-// lives in seh64_gnu.rs
-#[cfg(all(any(target_os = "ios", target_os = "netbsd", not(target_arch = "arm"))))]
-#[lang = "eh_personality"]
-#[no_mangle]
+// Shared version of the default personality routine, which is used directly on
+// most targets and indirectly on Windows x86_64 via SEH.
 #[allow(unused)]
-unsafe extern "C" fn rust_eh_personality(version: c_int,
-                                         actions: uw::_Unwind_Action,
-                                         exception_class: uw::_Unwind_Exception_Class,
-                                         exception_object: *mut uw::_Unwind_Exception,
-                                         context: *mut uw::_Unwind_Context)
-                                         -> uw::_Unwind_Reason_Code {
+unsafe extern "C" fn rust_eh_personality_impl(version: c_int,
+                                              actions: uw::_Unwind_Action,
+                                              exception_class: uw::_Unwind_Exception_Class,
+                                              exception_object: *mut uw::_Unwind_Exception,
+                                              context: *mut uw::_Unwind_Context)
+                                              -> uw::_Unwind_Reason_Code {
     if version != 1 {
         return uw::_URC_FATAL_PHASE1_ERROR;
     }
-    let eh_action = match find_eh_action(context) {
+    let foreign_exception = exception_class != rust_exception_class();
+    let eh_action = match find_eh_action(context, foreign_exception) {
         Ok(action) => action,
         Err(_) => return uw::_URC_FATAL_PHASE1_ERROR,
     };
@@ -173,6 +170,23 @@ unsafe extern "C" fn rust_eh_personality(version: c_int,
             EHAction::Terminate => uw::_URC_FATAL_PHASE2_ERROR,
         }
     }
+}
+
+// The personality routine for most of our targets, except ARM, which has a slightly different ABI
+// (however, iOS goes here as it uses SjLj unwinding).  Also, the 64-bit Windows implementation
+// uses a different personality (below) but eventually also calls rust_eh_personality_impl.
+#[cfg(all(any(target_os = "ios", target_os = "netbsd", not(target_arch = "arm")),
+          not(all(windows, target_arch = "x86_64", target_env = "gnu"))))]
+#[lang = "eh_personality"]
+#[no_mangle]
+#[allow(unused)]
+unsafe extern "C" fn rust_eh_personality(version: c_int,
+                                         actions: uw::_Unwind_Action,
+                                         exception_class: uw::_Unwind_Exception_Class,
+                                         exception_object: *mut uw::_Unwind_Exception,
+                                         context: *mut uw::_Unwind_Context)
+                                         -> uw::_Unwind_Reason_Code {
+    rust_eh_personality_impl(version, actions, exception_class, exception_object, context)
 }
 
 // ARM EHABI personality routine.
@@ -215,7 +229,9 @@ unsafe extern "C" fn rust_eh_personality(state: uw::_Unwind_State,
     // _Unwind_Context in our libunwind bindings and fetch the required data from there directly,
     // bypassing DWARF compatibility functions.
 
-    let eh_action = match find_eh_action(context) {
+    let exception_class = unsafe { (*exception_object).exception_class };
+    let foreign_exception = exception_class != rust_exception_class();
+    let eh_action = match find_eh_action(context, foreign_exception) {
         Ok(action) => action,
         Err(_) => return uw::_URC_FAILURE,
     };
@@ -259,7 +275,25 @@ unsafe extern "C" fn rust_eh_personality(state: uw::_Unwind_State,
     }
 }
 
-unsafe fn find_eh_action(context: *mut uw::_Unwind_Context)
+// On x86_64 MinGW targets, the unwinding mechanism is SEH however the unwind
+// handler data (aka LSDA) uses GCC-compatible encoding.
+#[cfg(all(windows, target_arch = "x86_64", target_env = "gnu"))]
+#[lang = "eh_personality"]
+#[no_mangle]
+#[allow(nonstandard_style)]
+unsafe extern "C" fn rust_eh_personality(exceptionRecord: *mut uw::EXCEPTION_RECORD,
+                                         establisherFrame: uw::LPVOID,
+                                         contextRecord: *mut uw::CONTEXT,
+                                         dispatcherContext: *mut uw::DISPATCHER_CONTEXT)
+                                         -> uw::EXCEPTION_DISPOSITION {
+    uw::_GCC_specific_handler(exceptionRecord,
+                              establisherFrame,
+                              contextRecord,
+                              dispatcherContext,
+                              rust_eh_personality_impl)
+}
+
+unsafe fn find_eh_action(context: *mut uw::_Unwind_Context, foreign_exception: bool)
     -> Result<EHAction, ()>
 {
     let lsda = uw::_Unwind_GetLanguageSpecificData(context) as *const u8;
@@ -273,11 +307,11 @@ unsafe fn find_eh_action(context: *mut uw::_Unwind_Context)
         get_text_start: &|| uw::_Unwind_GetTextRelBase(context),
         get_data_start: &|| uw::_Unwind_GetDataRelBase(context),
     };
-    eh::find_eh_action(lsda, &eh_context)
+    eh::find_eh_action(lsda, &eh_context, foreign_exception)
 }
 
 // See docs in the `unwind` module.
-#[cfg(all(target_os="windows", target_arch = "x86", target_env="gnu"))]
+#[cfg(all(target_os="windows", any(target_arch = "x86", target_arch = "x86_64"), target_env="gnu"))]
 #[lang = "eh_unwind_resume"]
 #[unwind(allowed)]
 unsafe extern "C" fn rust_eh_unwind_resume(panic_ctx: *mut u8) -> ! {

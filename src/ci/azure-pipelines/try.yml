@@ -6,21 +6,21 @@ variables:
 - group: prod-credentials
 
 jobs:
-- job: Linux
-  timeoutInMinutes: 600
-  pool:
-    vmImage: ubuntu-16.04
-  steps:
-  - template: steps/run.yml
-  strategy:
-    matrix:
-      dist-x86_64-linux:
-        IMAGE: dist-x86_64-linux
-        DEPLOY: 1
-
-      dist-x86_64-linux-alt:
-        IMAGE: dist-x86_64-linux
-        DEPLOY_ALT: 1
+# - job: Linux
+#   timeoutInMinutes: 600
+#   pool:
+#     vmImage: ubuntu-16.04
+#   steps:
+#   - template: steps/run.yml
+#   strategy:
+#     matrix:
+#       dist-x86_64-linux:
+#         IMAGE: dist-x86_64-linux
+#         DEPLOY: 1
+# 
+#       dist-x86_64-linux-alt:
+#         IMAGE: dist-x86_64-linux
+#         DEPLOY_ALT: 1
 
 # The macOS and Windows builds here are currently disabled due to them not being
 # overly necessary on `try` builds. We also don't actually have anything that
@@ -53,24 +53,50 @@ jobs:
 #         NO_LLVM_ASSERTIONS: 1
 #         NO_DEBUG_ASSERTIONS: 1
 #
-# - job: Windows
-#   timeoutInMinutes: 600
-#   pool:
-#     vmImage: 'vs2017-win2016'
-#   steps:
-#   - template: steps/run.yml
-#   strategy:
-#     matrix:
-#       dist-x86_64-msvc:
-#         RUST_CONFIGURE_ARGS: >
-#           --build=x86_64-pc-windows-msvc
-#           --target=x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
-#           --enable-full-tools
-#           --enable-profiler
-#         SCRIPT: python x.py dist
-#         DIST_REQUIRE_ALL_TOOLS: 1
-#         DEPLOY: 1
-#
+ - job: Windows
+   timeoutInMinutes: 600
+   pool:
+     vmImage: 'vs2017-win2016'
+   steps:
+   - template: steps/run.yml
+   strategy:
+     matrix:
+      # 32/64 bit MSVC tests
+      x86_64-msvc-1:
+        MSYS_BITS: 64
+        RUST_CONFIGURE_ARGS: --build=x86_64-pc-windows-msvc --enable-profiler
+        SCRIPT: make ci-subset-1
+        # FIXME(#59637)
+        NO_DEBUG_ASSERTIONS: 1
+        NO_LLVM_ASSERTIONS: 1
+      i686-msvc-1:
+        MSYS_BITS: 32
+        RUST_CONFIGURE_ARGS: --build=i686-pc-windows-msvc
+        SCRIPT: make ci-subset-1
+        # FIXME(#59637)
+        NO_DEBUG_ASSERTIONS: 1
+        NO_LLVM_ASSERTIONS: 1
+      i686-mingw-1:
+        MSYS_BITS: 32
+        RUST_CONFIGURE_ARGS: --build=i686-pc-windows-gnu
+        SCRIPT: make ci-mingw-subset-1
+        MINGW_URL: https://rust-lang-ci-mirrors.s3-us-west-1.amazonaws.com/rustc
+        MINGW_ARCHIVE: i686-6.3.0-release-posix-dwarf-rt_v5-rev2.7z
+        MINGW_DIR: mingw32
+        # FIXME(#59637)
+        NO_DEBUG_ASSERTIONS: 1
+        NO_LLVM_ASSERTIONS: 1
+      x86_64-mingw-1:
+        MSYS_BITS: 64
+        SCRIPT: make ci-mingw-subset-1
+        RUST_CONFIGURE_ARGS: --build=x86_64-pc-windows-gnu
+        MINGW_URL: https://rust-lang-ci-mirrors.s3-us-west-1.amazonaws.com/rustc
+        MINGW_ARCHIVE: x86_64-6.3.0-release-posix-seh-rt_v5-rev2.7z
+        MINGW_DIR: mingw64
+        # FIXME(#59637)
+        NO_DEBUG_ASSERTIONS: 1
+        NO_LLVM_ASSERTIONS: 1
+
 #       dist-x86_64-msvc-alt:
 #         MSYS_BITS: 64
 #         RUST_CONFIGURE_ARGS: --build=x86_64-pc-windows-msvc --enable-extended --enable-profiler
